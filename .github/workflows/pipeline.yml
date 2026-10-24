@@ -1,0 +1,111 @@
+name: Tourism Project Pipeline
+
+on:
+  push:
+    branches:
+      - main               # Automatically triggers on push to the main branch
+  workflow_dispatch:       # lets you click "Run workflow" in the Actions tab
+
+permissions:
+  contents: write          # needed so the pipeline can commit the trained model back
+
+# If several pushes arrive in quick succession, only the newest run continues.
+concurrency:
+  group: tourism-pipeline
+  cancel-in-progress: true
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # Job 1 - register + validate the dataset
+  # ---------------------------------------------------------------------------
+  register-dataset:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Dependencies
+        run: pip install -r tourism_project/requirements.txt
+      - name: Register Dataset
+        run: python tourism_project/model_building/data_register.py
+      - name: Upload Registered Dataset
+        uses: actions/upload-artifact@v4
+        with:
+          name: registered-data
+          path: tourism_project/data/tourism.csv
+
+  # ---------------------------------------------------------------------------
+  # Job 2 - clean the data and create train / test splits
+  # ---------------------------------------------------------------------------
+  data-prep:
+    needs: register-dataset
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Dependencies
+        run: pip install -r tourism_project/requirements.txt
+      - name: Run Data Preparation
+        run: python tourism_project/model_building/prep.py
+      - name: Upload Train Test Splits
+        uses: actions/upload-artifact@v4
+        with:
+          name: data-splits
+          path: |
+            Xtrain.csv
+            Xtest.csv
+            ytrain.csv
+            ytest.csv
+
+  # ---------------------------------------------------------------------------
+  # Job 3 - tune + evaluate the model, track it in MLflow, commit it to the repo
+  # ---------------------------------------------------------------------------
+  model-training:
+    needs: data-prep
+    runs-on: ubuntu-latest
+    env:
+      MLFLOW_TRACKING_URI: http://localhost:5000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Dependencies
+        run: pip install -r tourism_project/requirements.txt
+      - name: Download Train Test Splits
+        uses: actions/download-artifact@v4
+        with:
+          name: data-splits
+      - name: Start MLflow Server
+        run: |
+          nohup mlflow ui --host 127.0.0.1 --port 5000 > mlflow_server.log 2>&1 &   # run the MLflow UI in the background
+          for i in $(seq 1 30); do curl -s http://localhost:5000 > /dev/null && break; sleep 1; done   # wait until it responds
+      - name: Model Building
+        run: python tourism_project/model_building/train.py
+      - name: Show Model Metrics in the Run Summary
+        run: |
+          echo '### Model metrics' >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat tourism_project/deployment/model_metrics.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+      - name: Commit Trained Model
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add tourism_project/deployment/best_tourism_model_v1.joblib tourism_project/deployment/model_metrics.json
+          git commit -m "Add trained model [skip ci]" || echo "No changes to commit"
+          git pull --rebase origin main
+          git push origin HEAD:main
+      - name: Upload MLflow Experiment Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mlflow-experiments
+          path: |
+            mlruns
+            mlartifacts
+          if-no-files-found: ignore
