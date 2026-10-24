@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+mlruns/
+mlartifacts/
+mlflow_server.log
+# train/test splits are produced by the pipeline and passed between jobs as artifacts
+Xtrain.csv
+Xtest.csv
+ytrain.csv
+ytest.csv
