@@ -1,0 +1,9 @@
+# Dependencies for the Streamlit app.
+# Versions match tourism_project/requirements.txt so the saved model loads exactly
+# as it was trained (deploy on Python 3.11 in Streamlit Community Cloud).
+streamlit==1.52.2
+pandas==2.2.3
+numpy==1.26.4
+scikit-learn==1.6.1
+xgboost==2.1.4
+joblib==1.4.2
